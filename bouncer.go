@@ -118,7 +118,12 @@ type Bouncer struct {
 // New creates the crowdsec bouncer plugin.
 //
 //nolint:gocyclo
-func New(_ context.Context, next http.Handler, config *configuration.Config, name string) (http.Handler, error) {
+func New(
+	_ context.Context,
+	next http.Handler,
+	config *configuration.Config,
+	name string,
+) (http.Handler, error) {
 	config.LogLevel = strings.ToUpper(config.LogLevel)
 	log := logger.New(config.LogLevel, config.LogFilePath)
 	err := configuration.ValidateParams(config)
@@ -255,7 +260,8 @@ func New(_ context.Context, next http.Handler, config *configuration.Config, nam
 		return nil, err
 	}
 
-	if (config.CrowdsecMode == configuration.StreamMode || config.CrowdsecMode == configuration.AloneMode) && streamTicker == nil {
+	if (config.CrowdsecMode == configuration.StreamMode || config.CrowdsecMode == configuration.AloneMode) &&
+		streamTicker == nil {
 		if config.CrowdsecMode == configuration.AloneMode {
 			if err := getToken(bouncer); err != nil {
 				bouncer.log.Error("New:getToken " + err.Error())
@@ -322,9 +328,13 @@ func (bouncer *Bouncer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		value, cacheErr := bouncer.cacheClient.Get(remoteIP)
 		if cacheErr != nil {
 			cacheErrString := cacheErr.Error()
-			bouncer.log.Debug(fmt.Sprintf("ServeHTTP:Get ip:%s isBanned:false %s", remoteIP, cacheErrString))
+			bouncer.log.Debug(
+				fmt.Sprintf("ServeHTTP:Get ip:%s isBanned:false %s", remoteIP, cacheErrString),
+			)
 			if !bouncer.redisUnreachableBlock && cacheErrString == cache.CacheUnreachable {
-				bouncer.log.Error(fmt.Sprintf("ServeHTTP:Get ip:%s redisUnreachable=true", remoteIP))
+				bouncer.log.Error(
+					fmt.Sprintf("ServeHTTP:Get ip:%s redisUnreachable=true", remoteIP),
+				)
 				handleNextServeHTTP(bouncer, remoteIP, rw, req)
 				return
 			}
@@ -345,7 +355,8 @@ func (bouncer *Bouncer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	// Right here if we cannot join the stream we forbid the request to go on.
-	if bouncer.crowdsecMode == configuration.StreamMode || bouncer.crowdsecMode == configuration.AloneMode {
+	if bouncer.crowdsecMode == configuration.StreamMode ||
+		bouncer.crowdsecMode == configuration.AloneMode {
 		if isCrowdsecStreamHealthy {
 			handleNextServeHTTP(bouncer, remoteIP, rw, req)
 		} else {
@@ -411,28 +422,48 @@ func handleBanServeHTTP(bouncer *Bouncer, rw http.ResponseWriter, method string)
 	_, err := fmt.Fprint(rw, bouncer.banTemplateString)
 	if err != nil {
 		// use warn when https://github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin/pull/276 is completed
-		bouncer.log.Error("handleBanServeHTTP could not write template to ResponseWriter: " + err.Error())
+		bouncer.log.Error(
+			"handleBanServeHTTP could not write template to ResponseWriter: " + err.Error(),
+		)
 	}
 }
 
-func handleRemediationServeHTTP(bouncer *Bouncer, remoteIP, remediation string, rw http.ResponseWriter, req *http.Request) {
-	bouncer.log.Debug(fmt.Sprintf("handleRemediationServeHTTP ip:%s remediation:%s", remoteIP, remediation))
-	if bouncer.captchaClient.Valid && remediation == cache.CaptchaValue && req.Method != http.MethodHead {
+func handleRemediationServeHTTP(
+	bouncer *Bouncer,
+	remoteIP, remediation string,
+	rw http.ResponseWriter,
+	req *http.Request,
+) {
+	bouncer.log.Debug(
+		fmt.Sprintf("handleRemediationServeHTTP ip:%s remediation:%s", remoteIP, remediation),
+	)
+	if bouncer.captchaClient.Valid && remediation == cache.CaptchaValue &&
+		req.Method != http.MethodHead {
 		if bouncer.captchaClient.Check(remoteIP) {
 			handleNextServeHTTP(bouncer, remoteIP, rw, req)
 			return
 		}
-		atomic.AddInt64(&blockedRequests, 1) //  If we serve a captcha that should count as a dropped request.
+		atomic.AddInt64(
+			&blockedRequests,
+			1,
+		) //  If we serve a captcha that should count as a dropped request.
 		bouncer.captchaClient.ServeHTTP(rw, req, remoteIP)
 		return
 	}
 	handleBanServeHTTP(bouncer, rw, req.Method)
 }
 
-func handleNextServeHTTP(bouncer *Bouncer, remoteIP string, rw http.ResponseWriter, req *http.Request) {
+func handleNextServeHTTP(
+	bouncer *Bouncer,
+	remoteIP string,
+	rw http.ResponseWriter,
+	req *http.Request,
+) {
 	if bouncer.appsecEnabled {
 		if err := appsecQuery(bouncer, remoteIP, req); err != nil {
-			bouncer.log.Debug(fmt.Sprintf("handleNextServeHTTP ip:%s isWaf:true %s", remoteIP, err.Error()))
+			bouncer.log.Debug(
+				fmt.Sprintf("handleNextServeHTTP ip:%s isWaf:true %s", remoteIP, err.Error()),
+			)
 			handleBanServeHTTP(bouncer, rw, req.Method)
 			return
 		}
@@ -442,10 +473,24 @@ func handleNextServeHTTP(bouncer *Bouncer, remoteIP string, rw http.ResponseWrit
 
 func handleStreamTicker(bouncer *Bouncer) {
 	if err := handleStreamCache(bouncer); err != nil {
-		bouncer.log.Debug(fmt.Sprintf("handleStreamTicker updateFailure:%d isCrowdsecStreamHealthy:%t %s", updateFailure, isCrowdsecStreamHealthy, err.Error()))
-		if bouncer.updateMaxFailure != -1 && updateFailure >= bouncer.updateMaxFailure && isCrowdsecStreamHealthy {
+		bouncer.log.Debug(
+			fmt.Sprintf(
+				"handleStreamTicker updateFailure:%d isCrowdsecStreamHealthy:%t %s",
+				updateFailure,
+				isCrowdsecStreamHealthy,
+				err.Error(),
+			),
+		)
+		if bouncer.updateMaxFailure != -1 && updateFailure >= bouncer.updateMaxFailure &&
+			isCrowdsecStreamHealthy {
 			isCrowdsecStreamHealthy = false
-			bouncer.log.Error(fmt.Sprintf("handleStreamTicker:error updateFailure:%d %s", updateFailure, err.Error()))
+			bouncer.log.Error(
+				fmt.Sprintf(
+					"handleStreamTicker:error updateFailure:%d %s",
+					updateFailure,
+					err.Error(),
+				),
+			)
 		}
 		updateFailure++
 	} else {
@@ -641,7 +686,8 @@ func crowdsecQuery(bouncer *Bouncer, stringURL string, data []byte) ([]byte, err
 			bouncer.log.Error("crowdsecQuery:closeBody " + err.Error())
 		}
 	}()
-	if res.StatusCode == http.StatusUnauthorized && bouncer.crowdsecMode == configuration.AloneMode {
+	if res.StatusCode == http.StatusUnauthorized &&
+		bouncer.crowdsecMode == configuration.AloneMode {
 		if errToken := getToken(bouncer); errToken != nil {
 			return nil, fmt.Errorf("crowdsecQuery:renewToken url:%s %w", stringURL, errToken)
 		}
@@ -651,7 +697,12 @@ func crowdsecQuery(bouncer *Bouncer, stringURL string, data []byte) ([]byte, err
 	// Check if the status code starts with 2
 	statusStr := strconv.Itoa(res.StatusCode)
 	if len(statusStr) < 1 || statusStr[0] != '2' {
-		return nil, fmt.Errorf("crowdsecQuery method:%s url:%s, statusCode:%d (expected: 2xx)", req.Method, stringURL, res.StatusCode)
+		return nil, fmt.Errorf(
+			"crowdsecQuery method:%s url:%s, statusCode:%d (expected: 2xx)",
+			req.Method,
+			stringURL,
+			res.StatusCode,
+		)
 	}
 
 	body, err := io.ReadAll(res.Body)
@@ -697,7 +748,7 @@ func appsecQuery(bouncer *Bouncer, ip string, httpReq *http.Request) error {
 
 	res, err := bouncer.httpClient.Do(req)
 	if err != nil {
-		bouncer.log.Error("appsecQuery:unreachable")
+		bouncer.log.Error("appsecQuery:unreachable " + err.Error())
 		if bouncer.appsecUnreachableBlock {
 			return fmt.Errorf("appsecQuery:unreachable %w", err)
 		}
@@ -730,7 +781,13 @@ func reportMetrics(bouncer *Bouncer) error {
 	currentCount := atomic.LoadInt64(&blockedRequests)
 	windowSizeSeconds := int(now.Sub(lastMetricsPush).Seconds())
 
-	bouncer.log.Debug(fmt.Sprintf("reportMetrics: blocked_requests=%d window_size=%ds", currentCount, windowSizeSeconds))
+	bouncer.log.Debug(
+		fmt.Sprintf(
+			"reportMetrics: blocked_requests=%d window_size=%ds",
+			currentCount,
+			windowSizeSeconds,
+		),
+	)
 
 	metrics := map[string]interface{}{
 		"remediation_components": []map[string]interface{}{
